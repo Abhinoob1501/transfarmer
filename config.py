@@ -13,7 +13,7 @@ def get_config():
         "model_folder":"weights",
         "model_basename":"tmodel_",
         "preload":None,
-        "tockenizer_file":"tockenizer_{0}.json",
+        "tokenizer_file":"tokenizer_{0}.json",
         "experiment_name":"run/tmodel"        
     }
 def get_weight_file_path(config,epoch:str):

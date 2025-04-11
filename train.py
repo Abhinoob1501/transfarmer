@@ -4,10 +4,10 @@ from torch.utils.data import DataLoader, Dataset, random_split
 import os
 import warnings as Warning
 from datasets import load_dataset
-from tockenizers import Tokenizer
-from tockenizer.models import Wordlevel
-from tockenizer.trainers import WordlevelTrainer
-from tockenizer.pre_tockenizers import Whitespace
+from tokenizers import Tokenizer
+from tokenizer.models import Wordlevel
+from tokenizer.trainers import WordlevelTrainer
+from tokenizer.pre_tokenizers import Whitespace
 from dataset import BilingualDataset,casual_mask
 from model import build_transformer
 from torch.utils.tensorboard import SummaryWriter
@@ -19,38 +19,38 @@ def get_all_sentences(ds, lang):
     for item in ds:
         yield item["translation"][lang] 
 
-def get_or_build_tockenizer(config,ds,lang):
-    tockenizer_path=Path(config["tockenizer_path"].format(lang))
-    if not Path.exists(tockenizer_path):
-        tockenizer=Tokenizer(Wordlevel(unk_token="[UNK]"))
-        tockenizer.pre_tokenizer=Whitespace()
+def get_or_build_tokenizer(config,ds,lang):
+    tokenizer_path=Path(config["tokenizer_path"].format(lang))
+    if not Path.exists(tokenizer_path):
+        tokenizer=Tokenizer(Wordlevel(unk_token="[UNK]"))
+        tokenizer.pre_tokenizer=Whitespace()
         trainer=WordlevelTrainer(special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]"], min_frequency=2)
-        tockenizer.train_from_iterator(get_all_sentences(ds,lang), trainer=trainer)
-        tockenizer.save(tockenizer_path)
+        tokenizer.train_from_iterator(get_all_sentences(ds,lang), trainer=trainer)
+        tokenizer.save(tokenizer_path)
     else:
-        tockenizer=Tokenizer.from_file(tockenizer_path)
-    return tockenizer
+        tokenizer=Tokenizer.from_file(tokenizer_path)
+    return tokenizer
 
 def get_ds(config):
 
     raw_ds=load_dataset('opus_books',f'{config["lang1"]}-{config["lang2"]}',split='train')
 
-    tockenizer_src=get_or_build_tockenizer(config,raw_ds,config["lang1"])
-    tockenizer_tgt=get_or_build_tockenizer(config,raw_ds,config["lang2"])
+    tokenizer_src=get_or_build_tokenizer(config,raw_ds,config["lang1"])
+    tokenizer_tgt=get_or_build_tokenizer(config,raw_ds,config["lang2"])
 
     train_ds_size=int(len(raw_ds)*0.9)
     valid_ds_size=len(raw_ds)-train_ds_size
     train_ds_raw, valid_ds_raw=random_split(raw_ds,[train_ds_size,valid_ds_size])
 
-    train_ds=BilingualDataset(train_ds_raw,tockenizer_src,tockenizer_tgt,config["lang1"],config["lang2"],config["seq_len"])
-    valid_ds=BilingualDataset(valid_ds_raw,tockenizer_src,tockenizer_tgt,config["lang1"],config["lang2"],config["seq_len"])
+    train_ds=BilingualDataset(train_ds_raw,tokenizer_src,tokenizer_tgt,config["lang1"],config["lang2"],config["seq_len"])
+    valid_ds=BilingualDataset(valid_ds_raw,tokenizer_src,tokenizer_tgt,config["lang1"],config["lang2"],config["seq_len"])
 
     max_len_src=0
     max_len_tgt=0
     
     for item in raw_ds:
-        src_ids=tockenizer_src.encode(item["translation"][config["lang1"]]).ids
-        tgt_ids=tockenizer_tgt.encode(item["translation"][config["lang2"]]).ids
+        src_ids=tokenizer_src.encode(item["translation"][config["lang1"]]).ids
+        tgt_ids=tokenizer_tgt.encode(item["translation"][config["lang2"]]).ids
         max_len_src=max(max_len_src,len(src_ids))
         max_len_tgt=max(max_len_tgt,len(tgt_ids))
 
@@ -59,7 +59,7 @@ def get_ds(config):
     train_dataloader=DataLoader(train_ds,batch_size=config["batch_size"],shuffle=True)
     val_dataloader=DataLoader(valid_ds,batch_size=1,shuffle=True)
 
-    return train_dataloader, val_dataloader, tockenizer_src, tockenizer_tgt
+    return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
 def get_model(config,vocab_src_len,vocab_tgt_len):
     model=build_transformer(vocab_src_len,vocab_tgt_len,config["seq_len"],config["seq_len"],config["d_model"])
@@ -71,8 +71,8 @@ def train_model(config):
 
     Path(config["model_folder"]).mkdir(parents=True, exist_ok=True)
 
-    train_dataloader, val_dataloader, tockenizer_src, tockenizer_tgt=get_ds(config)
-    model=get_model(config,tockenizer_src.get_vocab_size(),tockenizer_tgt.get_vocab_size()).to(device)
+    train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt=get_ds(config)
+    model=get_model(config,tokenizer_src.get_vocab_size(),tokenizer_tgt.get_vocab_size()).to(device)
 
     writer=SummaryWriter(config["experiment_name"])
 
@@ -89,7 +89,7 @@ def train_model(config):
         optimizer.load_state_dict(state['optimizer_state_dict'])
         global_step=state["global_step"]
     
-    loss_fn=nn.CrossEntropyLoss(ignore_index=tockenizer_src.token_to_id("[PAD]"),label_smoothing=0.1).to(device)
+    loss_fn=nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id("[PAD]"),label_smoothing=0.1).to(device)
 
     for epoch in range(initial_epoch,config['num_epochs']):
         model.train()
@@ -107,7 +107,7 @@ def train_model(config):
 
             label=batch["label"].to(device)
 
-            loss=loss_fn(proj_output.view(-1,tockenizer_tgt.get_vocab_size()),label.view(-1))
+            loss=loss_fn(proj_output.view(-1,tokenizer_tgt.get_vocab_size()),label.view(-1))
             batch_iterator.set_postfix({f" loss": f"{loss.item():6.3f}"})
 
             writer.add_scalar("train loss",loss.item(),global_step)
